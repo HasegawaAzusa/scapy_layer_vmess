@@ -41,6 +41,7 @@ def fnv1a32(data: bytes) -> int:
         hash_ = 0x01000193 * (hash_ ^ byte) & 0xFFFFFFFF
     return hash_
 
+
 def gen_resp_key(body_key: bytes):
     """
     Generate response body key
@@ -53,6 +54,7 @@ def gen_resp_key(body_key: bytes):
     """
     return hashlib.sha256(body_key).digest()[0:16]
 
+
 def gen_resp_iv(body_iv: bytes):
     """
     Generate response body iv
@@ -64,6 +66,7 @@ def gen_resp_iv(body_iv: bytes):
         bytes: response body iv
     """
     return hashlib.sha256(body_iv).digest()[0:16]
+
 
 class MaskerProtocol(Protocol):
     def next(self) -> bytes:

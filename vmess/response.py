@@ -1,7 +1,8 @@
 from scapy.fields import Field, PacketField
 from scapy.packet import Packet
-from .header import VMessResponseHeader
 from .body import VMessBody
+from .header import VMessResponseHeader
+
 
 class VMessResponse(Packet):
     name = "VMess Response"

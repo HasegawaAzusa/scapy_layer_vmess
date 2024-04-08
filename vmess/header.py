@@ -3,9 +3,9 @@ from scapy.packet import Packet
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .constants import *
-from .session import VMessSessionManager, VMessSessionData
 from .crypt import *
-from . import vmess_id
+from .identity import VMessID
+from .session import VMessSessionManager, VMessSessionData
 import binascii
 
 
@@ -20,7 +20,7 @@ class VMessAEADAuthID(Packet):
     @classmethod
     def decrypt_auid(cls, encrypted_auid: bytes):
         assert len(encrypted_auid) == 16
-        key = kdf16(vmess_id().cmd_key, [KDFSaltConstants.AuthIDEncryptionKey])
+        key = kdf16(VMessID.cmd_key, [KDFSaltConstants.AuthIDEncryptionKey])
         cipher = Cipher(algorithms.AES(key), modes.ECB())
         decryptor = cipher.decryptor()
         decrypted_auid = decryptor.update(encrypted_auid) + decryptor.finalize()
@@ -46,7 +46,7 @@ class VMessAEADAuthID(Packet):
         return b"", s
 
     def do_build(self) -> bytes:
-        key = kdf16(vmess_id().cmd_key, [KDFSaltConstants.AuthIDEncryptionKey])
+        key = kdf16(VMessID.cmd_key, [KDFSaltConstants.AuthIDEncryptionKey])
         cipher = Cipher(algorithms.AES(key), modes.ECB())
         encryptor = cipher.encryptor()
         decrypted_auth_id = super().do_build()
@@ -147,7 +147,7 @@ class VMessAEADHeader(Packet):
     ):
         assert len(encrypted_length) == 18
         header_length_key = kdf16(
-            vmess_id().cmd_key,
+            VMessID.cmd_key,
             [
                 KDFSaltConstants.VMessHeaderPayloadLengthAEADKey,
                 encrypted_auth_id,
@@ -155,7 +155,7 @@ class VMessAEADHeader(Packet):
             ],
         )
         header_length_nonce = kdf12(
-            vmess_id().cmd_key,
+            VMessID.cmd_key,
             [KDFSaltConstants.VMessHeaderPayloadLengthAEADIV, encrypted_auth_id, nonce],
         )
         aesgcm = AESGCM(header_length_key)
@@ -170,11 +170,11 @@ class VMessAEADHeader(Packet):
     ):
         assert len(encrypted_header) > 16
         header_key = kdf16(
-            vmess_id().cmd_key,
+            VMessID.cmd_key,
             [KDFSaltConstants.VMessHeaderPayloadAEADKey, encrypted_auth_id, nonce],
         )
         header_nonce = kdf12(
-            vmess_id().cmd_key,
+            VMessID.cmd_key,
             [KDFSaltConstants.VMessHeaderPayloadAEADIV, encrypted_auth_id, nonce],
         )
         aesgcm = AESGCM(header_key)

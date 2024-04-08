@@ -4,6 +4,7 @@ from .constants import *
 from .crypt import *
 from .session import VMessSessionManager, VMessSessionData
 
+
 class VMessBody(Packet):
     name = "VMess Body"
 

@@ -1,11 +1,12 @@
 from scapy.fields import *
 from scapy.packet import Packet
 from scapy.layers.inet import TCP
-from .header import VMessAEADHeader
 from .body import VMessBody
 from .constants import *
 from .crypt import *
+from .header import VMessAEADHeader
 from .session import VMessSessionManager
+
 
 class VMessRequest(Packet):
     name = "VMess Request"
