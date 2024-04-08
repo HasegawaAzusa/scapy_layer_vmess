@@ -1,30 +1,57 @@
-from dataclasses import dataclass, field
 import itertools
+from dataclasses import dataclass, field
+from scapy.packet import Packet
+from typing import NamedTuple
 from .constants import *
-from .crypt import Shake128Masker
-from .header import VMessPlainHeader
+from .crypt import MaskerProtocol, AEADAuthenticatorProtocol
 
-vmess_sessions: dict[str, 'VMessSession'] = dict()
-@dataclass
-class VMessSession:
-    header: VMessPlainHeader
-    counter: itertools.count
-    masker: Shake128Masker
+class VMessSessionData(NamedTuple):
+    is_padding: bool
+    masker: MaskerProtocol
+    auth: AEADAuthenticatorProtocol
+
+class VMessSessionManager:
+    vmess_sessions: dict[str, VMessSessionData] = dict()
+
+    def __init__(self) -> None:
+        raise NotImplementedError
 
     @classmethod
-    def new(cls, session_id: str, header: VMessPlainHeader):
-        global vmess_sessions
-        masker = None
-        if header.getfieldval("Option") & VMessBodyOptions.CHUNK_MASKING:
-            masker = Shake128Masker(header.getfieldval("BodyIV"))
-        vmess_sessions[session_id] = VMessSession(header, itertools.count(), masker)
+    def extract_tcp(cls, pkt: Packet):
+        # For Packet
+        while pkt:
+            if pkt.haslayer("TCP"):
+                return pkt["TCP"]
+            pkt = pkt.underlayer
+        else:
+            raise ValueError("Could not found TCP layer")
+
+    @classmethod
+    def extract_session_id(cls, pkt: Packet):
+        tcp_pkt: Packet = cls.extract_tcp(pkt)
+        sport = int(tcp_pkt.getfieldval("sport"))
+        dport = int(tcp_pkt.getfieldval("dport"))
+        return f"{sport}=>{dport}"
+
+    @classmethod
+    def extract_request_session_id(cls, pkt: Packet):
+        return cls.extract_session_id(pkt)
     
     @classmethod
-    def has(cls, session_id: str):
-        global vmess_sessions
-        return session_id in vmess_sessions
+    def extract_response_session_id(cls, pkt: Packet):
+        tcp_pkt: Packet = cls.extract_tcp(pkt)
+        sport = int(tcp_pkt.getfieldval("sport"))
+        dport = int(tcp_pkt.getfieldval("dport"))
+        return f"{dport}=>{sport}"
+    
+    @classmethod
+    def new(cls, session_id: str, session: VMessSessionData):
+        cls.vmess_sessions[session_id] = session
 
     @classmethod
-    def get(cls, session_id: str):
-        global vmess_sessions
-        return vmess_sessions[session_id]
+    def has(cls, session_id: str):
+        return session_id in cls.vmess_sessions
+    
+    @classmethod
+    def get(cls, session_id: str) -> VMessSessionData:
+        return cls.vmess_sessions[session_id]

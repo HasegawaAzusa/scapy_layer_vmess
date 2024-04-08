@@ -1,9 +1,9 @@
-import itertools
 from scapy.fields import *
 from scapy.packet import Packet
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .constants import *
+from .session import VMessSessionManager, VMessSessionData
 from .crypt import *
 from . import vmess_id
 import binascii
@@ -84,6 +84,53 @@ class VMessPlainHeader(Packet):
     def extract_padding(self, s):
         return "", s
 
+    def create_request_session(self) -> VMessSessionData:
+        """
+        Create VMessSessionData from header(header.Option, header.Security, header.BodyKey, header.BodyIV)
+
+        Returns:
+            VMessSessionData: VMess Session Data
+        """
+        option = self.getfieldval("Option")
+        security = self.getfieldval("Security")
+        body_key = self.getfieldval("BodyKey")
+        body_iv = self.getfieldval("BodyIV")
+        is_padding = bool(option & VMessBodyOptions.GLOBAL_PADDING)
+        masker = EmptyMasker()
+        if option & VMessBodyOptions.CHUNK_MASKING:
+            masker = Shake128Masker(body_iv)
+        auth = None
+        match security:
+            case VMessBodySecurity.AES_128_GCM:
+                auth = GCMAuthenticator(body_key, body_iv)
+            case _:
+                raise NotImplementedError
+        return VMessSessionData(is_padding, masker, auth)
+    
+    def create_response_session(self) -> VMessSessionData:
+        """
+        Create VMessSessionData from header(header.Option, header.Security, header.BodyKey, header.BodyIV)
+
+        Returns:
+            VMessSessionData: VMess Session Data
+        """
+        option = self.getfieldval("Option")
+        security = self.getfieldval("Security")
+        body_key = self.getfieldval("BodyKey")
+        body_iv = self.getfieldval("BodyIV")
+        resp_key = gen_resp_key(body_key)
+        resp_iv = gen_resp_iv(body_iv)
+        is_padding = bool(option & VMessBodyOptions.GLOBAL_PADDING)
+        masker = EmptyMasker()
+        if option & VMessBodyOptions.CHUNK_MASKING:
+            masker = Shake128Masker(resp_iv)
+        auth = None
+        match security:
+            case VMessBodySecurity.AES_128_GCM:
+                auth = GCMAuthenticator(resp_key, resp_iv)
+            case _:
+                raise NotImplementedError
+        return VMessSessionData(is_padding, masker, auth)
 
 class VMessAEADHeader(Packet):
     name = "VMess AEAD Header"
@@ -141,6 +188,31 @@ class VMessAEADHeader(Packet):
         checksum = int.from_bytes(decrypted_header[-4:], "big")
         return fnv1a32(decrypted_header[:-4]) == checksum
 
+    @classmethod
+    def create_response_auth_from_header(
+        self, header: VMessPlainHeader
+    ) -> AEADAuthenticatorProtocol:
+        """
+        Create Response Authenticator from header(header.Security, header.BodyKey, header.BodyIV)
+
+
+        Args:
+            header (VMessPlainHeader): VMess Header.EHeader
+
+        Returns:
+            AEADAuthenticatorProtocol: Authenticator
+        """
+        security = header.getfieldval("Security")
+        body_key = header.getfieldval("BodyKey")
+        body_iv = header.getfieldval("BodyIV")
+        resp_key = VMessAEADHeader.gen_resp_key(body_key)
+        resp_iv = VMessAEADHeader.gen_resp_iv(body_iv)
+        match security:
+            case VMessBodySecurity.AES_128_GCM:
+                return GCMAuthenticator(resp_key, resp_iv)
+            case _:
+                raise NotImplementedError
+
     def pre_dissect(self, s: bytes) -> bytes:
         assert len(s) >= 42, "AEAD Header must be greater than or equal 42"
         return super().pre_dissect(s)
@@ -176,7 +248,83 @@ class VMessAEADHeader(Packet):
         self.setfieldval(header_field.name, header)
         s = s[16 + length :]
 
+        ### Init Session
+        header: VMessPlainHeader
+        client_session = header.create_request_session()
+        server_session = header.create_response_session()
+        client_session_id = VMessSessionManager.extract_request_session_id(self.parent)
+        server_session_id = VMessSessionManager.extract_response_session_id(self.parent)
+        VMessSessionManager.new(client_session_id, client_session)
+        VMessSessionManager.new(server_session_id, server_session)
+
         return s
+
+    def extract_padding(self, s):
+        return b"", s
+
+
+class VMessResponseHeader(Packet):
+    name = "VMess Response Header"
+
+    fields_desc: list[Field] = [
+        ByteField("ResponseVerify", 0),
+        ByteField("Option", 0),
+        ByteField("Command", 0),
+        ByteField("CommandLength", 0),
+        XStrFixedLenField(
+            "CommandData", b"", length_from=lambda pkt: pkt.CommandLength
+        ),
+    ]
+
+    @classmethod
+    def decrypt_length(
+        cls, encrypted_header_length: bytes, resp_key: bytes, resp_iv: bytes
+    ) -> bytes:
+        assert len(encrypted_header_length) == 18
+        header_length_key = kdf16(resp_key, [KDFSaltConstants.AEADRespHeaderLenKey])
+        header_length_nonce = kdf12(resp_iv, [KDFSaltConstants.AEADRespHeaderLenIV])
+        decrypted_header_length = AESGCM(header_length_key).decrypt(
+            header_length_nonce,
+            encrypted_header_length,
+            None,
+        )
+        return decrypted_header_length
+
+    @classmethod
+    def decrypt_header(
+        cls, encrypted_header: bytes, resp_key: bytes, resp_iv: bytes
+    ) -> bytes:
+        assert len(encrypted_header) >= 16
+        header_key = kdf16(resp_key, [KDFSaltConstants.AEADRespHeaderPayloadKey])
+        header_nonce = kdf12(resp_iv, [KDFSaltConstants.AEADRespHeaderPayloadIV])
+        decrypted_header = AESGCM(header_key).decrypt(
+            header_nonce,
+            encrypted_header,
+            None,
+        )
+        return decrypted_header
+
+    def pre_dissect(self, s: bytes) -> bytes:
+        session_id = VMessSessionManager.extract_session_id(self.parent)
+        vmess_session = VMessSessionManager.get(session_id)
+        body_key = vmess_session.auth.body_key
+        body_iv = vmess_session.auth.body_iv
+
+        ### Header Length
+        encrypted_header_length = s[:18]
+        decrypted_header_length = VMessResponseHeader.decrypt_length(
+            encrypted_header_length,
+            body_key,
+            body_iv,
+        )
+        header_length = int.from_bytes(decrypted_header_length, "big")
+        s = s[18:]
+
+        ### Header
+        encrypted_header = s[:header_length + 16]
+        decrypted_header = VMessResponseHeader.decrypt_header(encrypted_header, body_key, body_iv)
+        s = s[header_length+16:]
+        return decrypted_header + s
 
     def extract_padding(self, s):
         return b"", s

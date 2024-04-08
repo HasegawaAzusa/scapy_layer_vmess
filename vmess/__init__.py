@@ -16,6 +16,7 @@ def vmess_id():
 
 
 from .request import VMessRequest
+from .response import VMessResponse
 
 
 def bind(port: int):
@@ -26,3 +27,4 @@ def bind(port: int):
         port (int): Proxy server port
     """
     bind_layers(TCP, VMessRequest, dport=port)
+    bind_layers(TCP, VMessResponse, sport=port)
