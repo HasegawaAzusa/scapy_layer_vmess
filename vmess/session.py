@@ -1,13 +1,15 @@
 from scapy.packet import Packet
-from typing import NamedTuple
+from dataclasses import dataclass
 from .constants import *
 from .crypt import MaskerProtocol, AEADAuthenticatorProtocol
 
 
-class VMessSessionData(NamedTuple):
+@dataclass
+class VMessSessionData:
     is_padding: bool
     masker: MaskerProtocol
     auth: AEADAuthenticatorProtocol
+    broken_body: bytes = b''
 
 
 class VMessSessionManager:

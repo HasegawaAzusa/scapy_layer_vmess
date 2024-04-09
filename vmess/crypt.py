@@ -78,13 +78,21 @@ class MaskerProtocol(Protocol):
         """
         ...
 
+    def copy(self) -> 'MaskerProtocol':
+        """
+        Return a copy of the masker
+
+        """        
+        ...
 
 class EmptyMasker(MaskerProtocol):
     def next(self) -> bytes:
         return b"\x00\x00"
 
+    def copy(self) -> MaskerProtocol:
+        return EmptyMasker()
 
-class Shake128Masker:
+class Shake128Masker(MaskerProtocol):
     mask_storage: bytes
     index: int = 0
 
@@ -98,6 +106,11 @@ class Shake128Masker:
         self.index += 2
         return mask
 
+    def copy(self) -> MaskerProtocol:
+        masker = Shake128Masker(b'')
+        masker.mask_storage = self.mask_storage
+        masker.index = self.index
+        return masker
 
 class AEADAuthenticatorProtocol(Protocol):
     body_key: bytes

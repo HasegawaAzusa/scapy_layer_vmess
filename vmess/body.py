@@ -24,7 +24,9 @@ class VMessBody(Packet):
         session_id = VMessSessionManager.extract_session_id(self.parent)
         vmess_session: VMessSessionData = VMessSessionManager.get(session_id)
 
+        s = vmess_session.broken_body + s
         ### Body Length
+        masker_copy = vmess_session.masker.copy()
         body_padding_length = 0
         if vmess_session.is_padding:
             padding_mask = vmess_session.masker.next()
@@ -36,6 +38,10 @@ class VMessBody(Packet):
         )
         _, body_length = body_length_field.getfield(self, decrypted_body_length)
         self.setfieldval(body_length_field.name, body_length)
+        if body_length > len(s):
+            vmess_session.broken_body += s
+            vmess_session.masker = masker_copy
+            raise ValueError("Body length is too long")
         s = s[2:]
 
         ### Body Data
@@ -47,4 +53,5 @@ class VMessBody(Packet):
         self.setfieldval(body_data_field.name, decrypted_body_data)
         self.setfieldval(body_padding_field.name, padding)
 
+        vmess_session.broken_body = s
         return s
